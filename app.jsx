@@ -34,7 +34,11 @@ async function apiCall(endpoint, body = {}, sessionId = null) {
   const res = await fetch(`${API_BASE}${endpoint}`, { method: "POST", headers, body: JSON.stringify(body) });
   let data = {};
   try { data = await res.json(); } catch(e) {}
-  if (!res.ok) throw new Error(data.message || data.error || `Server error (${res.status})`);
+  if (!res.ok) {
+  const err = new Error(data.message || data.error || `Server error (${res.status})`);
+  err.status = res.status;
+  throw err;
+}
   return data;
 }
 
@@ -177,25 +181,27 @@ function App() {
   }
 
   useEffect(() => {
-    const saved = loadSession();
-    if (!saved) { setAuthLoading(false); return; }
-    apiCall("/users.v1.UserService/Get", {}, saved)
-      .then(profile => {
-        const u = buildUser(profile, saved);
-        setCurrentUser(u);
-        setSessionId(saved);
-        loadAllData(saved, saved);
-      })
-      .catch(() => clearSession())
-      .finally(() => setAuthLoading(false));
-  }, []);
+  const saved = loadSession();
+  if (!saved) { setAuthLoading(false); return; }
+  apiCall("/users.v1.UserService/Get", {}, saved)
+    .then(profile => {
+      const u = buildUser(profile, saved);
+      setCurrentUser(u);
+      setSessionId(saved);
+      loadAllData(saved, saved);
+    })
+    .catch((e) => {
+      if (e.status === 401 || e.status === 403) clearSession();
+    })
+    .finally(() => setAuthLoading(false));
+}, []);
 
   const handleLogin = useCallback((user, sid) => {
-    saveSession(sid);
-    setCurrentUser(user);
-    setSessionId(sid);
-    loadAllData(sid, sid);
-  }, []);
+  saveSession(sid);
+  setCurrentUser(user);
+  setSessionId(sid);
+  setTimeout(() => loadAllData(sid, sid), 0); 
+}, []);
 
   const handleLogout = useCallback(async (revokeAll=false) => {
     if (sessionId) {
@@ -533,9 +539,10 @@ function SettingsPage({ ctx }) {
       if(newEmail)    body.email=newEmail;
       if(newPassword) body.password=newPassword;
       if(!body.email&&!body.password){setLoginError("Enter a new email or password.");setLoginLoading(false);return;}
-      await apiCall("/users.v1.UserService/UpdateLogin",body,sessionId);
-      if(newEmail) setCurrentUser(p=>({...p,email:newEmail}));
-      setNewEmail(""); setNewPassword(""); showToast("Login info updated!");
+      await apiCall("/users.v1.UserService/UpdateLogin", body, sessionId);
+      showToast("Login info updated! Please sign in again.");
+      clearSession();
+      setTimeout(() => handleLogout(), 1500); 
     } catch(e) { setLoginError(e.message||"Failed to update login info."); }
     finally { setLoginLoading(false); }
   }
