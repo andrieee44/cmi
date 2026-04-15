@@ -1,27 +1,40 @@
 // ============================================================
 //  app.jsx — Core shell: shared helpers, auth, layout,
 //            dashboard, settings, and app entry point.
-// skibidi
+//
 //  FILE MAP:
 //    app.jsx              ← you are here (core shell + shared utils)
 //    groupCalendar.jsx    ← Feature: Group Calendar Management
 //    calendarView.jsx     ← Feature: Calendar Grid & Event Management
 //    taskManager.jsx      ← Feature: Academic Task Tracker
+//    onboardingTutorial.jsx ← Feature: First-time User Onboarding
 //
 //  LOAD ORDER in index.html (order matters — app.jsx must be first):
 //    <script type="text/babel" src="app.jsx"></script>
 //    <script type="text/babel" src="groupCalendar.jsx"></script>
+//    <script type="text/babel" src="monthProgress.jsx"></script>
+//    <script type="text/babel" src="onboardingTutorial.jsx"></script>
 //    <script type="text/babel" src="calendarView.jsx"></script>
 //    <script type="text/babel" src="taskManager.jsx"></script>
 //
 //  WHAT USES THE DATABASE vs LOCALSTORAGE:
 //    ✅ DATABASE    — user accounts, calendars, events, members, access codes, tasks
-//    ⚠️ LOCALSTORAGE — calendar color prefs, session token (login state)
+//    ⚠️ LOCALSTORAGE — calendar color prefs, session token (login state),
+//                      tutorial_seen flag (per user)
 //
 //  TASKS:
 //    Tasks are stored as calendar events via the CalendarService API.
 //    They are identified by a "TASK:" prefix on the event SUMMARY field.
 //    No localStorage is used for tasks — all reads/writes go through calApi.
+//
+//  ONBOARDING TUTORIAL:
+//    - Fires only once, immediately after a new user registers.
+//    - handleRegister calls onLogin(finalUser, sid, true) — the 3rd arg
+//      isNewUser=true triggers setShowTutorial(true) in App.
+//    - On dismiss, OnboardingTutorial writes usc_<userId>_tutorial_seen="1"
+//      to localStorage so it never fires again for that user.
+//    - data-tutorial attributes are placed on key UI elements so the
+//      spotlight overlay can find and highlight them.
 // ============================================================
 
 const { useState, useEffect, useCallback } = React;
@@ -35,10 +48,10 @@ async function apiCall(endpoint, body = {}, sessionId = null) {
   let data = {};
   try { data = await res.json(); } catch(e) {}
   if (!res.ok) {
-  const err = new Error(data.message || data.error || `Server error (${res.status})`);
-  err.status = res.status;
-  throw err;
-}
+    const err = new Error(data.message || data.error || `Server error (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -109,6 +122,11 @@ function saveUD(uid, k, v)  { try { localStorage.setItem(userKey(uid,k),JSON.str
 function loadCalPrefs(userId)      { return loadUD(userId, "cal_prefs", {}); }
 function saveCalPrefs(userId, obj) { saveUD(userId, "cal_prefs", obj); }
 
+// Tutorial seen flag — per user, localStorage only
+function hasTutorialBeenSeen(userId) {
+  try { return localStorage.getItem(`usc_${userId}_tutorial_seen`) === "1"; } catch(e) { return true; }
+}
+
 // General utilities
 function uid_gen()    { return Math.random().toString(36).slice(2,10); }
 function fmtTime(iso) { return new Date(iso).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}); }
@@ -160,6 +178,8 @@ function App() {
   const [modal,         setModal]        = useState(null);
   const [toast,         setToast]        = useState(null);
   const [sidebarOpen,   setSidebarOpen]  = useState(false);
+  // ── Onboarding tutorial — true only for brand-new registrations ──
+  const [showTutorial,  setShowTutorial] = useState(false);
   const [theme,         setTheme]        = useState(() => {
     try { return localStorage.getItem("usc_theme") || "dark"; } catch(e) { return "dark"; }
   });
@@ -187,33 +207,40 @@ function App() {
     finally { setDataLoading(false); }
   }
 
-useEffect(() => {
-  const saved = loadSession();
-  console.log("Saved session:", saved); 
-  if (!saved) { setAuthLoading(false); return; }
+  useEffect(() => {
+    const saved = loadSession();
+    console.log("Saved session:", saved);
+    if (!saved) { setAuthLoading(false); return; }
 
-  fetchUserProfile(saved)
-    .then(profile => {
-      console.log("Profile response:", profile); 
-      const u = buildUser(profile, saved);
-      console.log("Built user:", u);
-      setCurrentUser(u);
-      setSessionId(saved);
-      loadAllData(saved, saved);
-    })
-    .catch((e) => {
-      console.error("Auth error:", e.status, e.message); 
-      if (e.status === 401 || e.status === 403) clearSession();
-    })
-    .finally(() => setAuthLoading(false));
-}, []);
+    fetchUserProfile(saved)
+      .then(profile => {
+        console.log("Profile response:", profile);
+        const u = buildUser(profile, saved);
+        console.log("Built user:", u);
+        setCurrentUser(u);
+        setSessionId(saved);
+        loadAllData(saved, saved);
+        // Returning users — never show tutorial again
+        // (tutorial flag is only set from handleLogin with isNewUser=true)
+      })
+      .catch((e) => {
+        console.error("Auth error:", e.status, e.message);
+        if (e.status === 401 || e.status === 403) clearSession();
+      })
+      .finally(() => setAuthLoading(false));
+  }, []);
 
-  const handleLogin = useCallback((user, sid) => {
-  saveSession(sid);
-  setCurrentUser(user);
-  setSessionId(sid);
-  setTimeout(() => loadAllData(sid, sid), 0); 
-}, []);
+  // isNewUser=true is passed only from AuthPage.handleRegister (new registration)
+  const handleLogin = useCallback((user, sid, isNewUser = false) => {
+    saveSession(sid);
+    setCurrentUser(user);
+    setSessionId(sid);
+    // Only fire tutorial if this is a new registration AND they haven't seen it
+    if (isNewUser && !hasTutorialBeenSeen(sid)) {
+      setShowTutorial(true);
+    }
+    setTimeout(() => loadAllData(sid, sid), 0);
+  }, []);
 
   const handleLogout = useCallback(async (revokeAll=false) => {
     if (sessionId) {
@@ -222,6 +249,7 @@ useEffect(() => {
     clearSession();
     setCurrentUser(null); setSessionId(null);
     setCalendars([]); setEvents([]);
+    setShowTutorial(false);
     setPage("dashboard");
   }, [sessionId]);
 
@@ -264,6 +292,14 @@ useEffect(() => {
         <BottomNav page={page} setPage={navigateTo} />
       </div>
       {modal && <ModalRouter modal={modal} ctx={ctx} />}
+      {/* ── Onboarding tutorial — only renders for brand-new users ── */}
+      {showTutorial && (
+        <OnboardingTutorial
+          userId={currentUser.id}
+          userName={currentUser.first_name}
+          onDismiss={() => setShowTutorial(false)}
+        />
+      )}
     </div>
   );
 }
@@ -320,7 +356,8 @@ function AuthPage({ onLogin }) {
       try { profile = await fetchUserProfile(sid); } catch(e) {}
       const user = buildUser(profile, sid);
       const finalUser = user.email ? user : { ...user, email, name: email, userType: "student" };
-      onLogin(finalUser, sid);
+      // Existing login — isNewUser=false (default), tutorial will NOT fire
+      onLogin(finalUser, sid, false);
     } catch(e) { setError(e.message || "Login failed. Check your credentials."); }
     finally { setLoading(false); }
   }
@@ -343,7 +380,8 @@ function AuthPage({ onLogin }) {
         first_name:firstName, last_name:lastName, middle_name:middleName,
         userType: "student"
       };
-      onLogin(finalUser, sid);
+      // ✅ isNewUser=true — triggers the onboarding tutorial in App
+      onLogin(finalUser, sid, true);
     } catch(e) { setError(e.message || "Registration failed. That email may already be in use."); }
     finally { setLoading(false); }
   }
@@ -402,7 +440,13 @@ function Sidebar({ page, setPage, ctx, isOpen }) {
       <div className="sidebar-nav">
         <div className="nav-section">
           {navItems.map(item=>(
-            <div key={item.id} className={`nav-item${page===item.id?" active":""}`} onClick={()=>setPage(item.id)}>
+            // data-tutorial="nav-<id>" — used by OnboardingTutorial spotlight
+            <div
+              key={item.id}
+              className={`nav-item${page===item.id?" active":""}`}
+              onClick={()=>setPage(item.id)}
+              data-tutorial={`nav-${item.id}`}
+            >
               <span style={{fontSize:16}}>{item.icon}</span>
               <span style={{flex:1}}>{item.label}</span>
             </div>
@@ -427,7 +471,16 @@ function Topbar({ page, ctx, setPage, onMenuClick }) {
       <button className="theme-toggle" title={theme==="dark"?"Switch to Light Mode":"Switch to Dark Mode"} onClick={toggleTheme}>
         {theme==="dark" ? "☀️" : "🌙"}
       </button>
-      <button className="btn-icon" title="Refresh" onClick={refreshCalendars} style={{fontSize:13}}>{dataLoading?"⟳":"↻"}</button>
+      {/* data-tutorial="topbar-refresh" — spotlit on the last tutorial step */}
+      <button
+        className="btn-icon"
+        title="Refresh"
+        onClick={refreshCalendars}
+        style={{fontSize:13}}
+        data-tutorial="topbar-refresh"
+      >
+        {dataLoading?"⟳":"↻"}
+      </button>
     </div>
   );
 }
@@ -453,7 +506,13 @@ function Dashboard({ ctx, setPage }) {
   return (
     <div>
       <div style={{marginBottom:20}}>
-        <div style={{fontFamily:"Syne,sans-serif",fontSize:22,fontWeight:800,marginBottom:4}}>Good {today.getHours()<12?"morning":today.getHours()<17?"afternoon":"evening"}, {currentUser.first_name || currentUser.name.split(" ")[0]}! 👋</div>
+        {/* data-tutorial="dashboard-greeting" — spotlit on the Dashboard step */}
+        <div
+          data-tutorial="dashboard-greeting"
+          style={{fontFamily:"Syne,sans-serif",fontSize:22,fontWeight:800,marginBottom:4}}
+        >
+          Good {today.getHours()<12?"morning":today.getHours()<17?"afternoon":"evening"}, {currentUser.first_name || currentUser.name.split(" ")[0]}! 👋
+        </div>
         <div style={{color:"var(--text2)",fontSize:13}}>{today.toLocaleDateString("en-PH",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
       </div>
       <div className="stats-grid" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:14,marginBottom:20}}>
@@ -523,6 +582,7 @@ function Dashboard({ ctx, setPage }) {
   );
 }
 
+// ─── SETTINGS PAGE ────────────────────────────────────────────────────────────
 function SettingsPage({ ctx }) {
   const { currentUser, setCurrentUser, sessionId, showToast, handleLogout } = ctx;
   const [firstName,setFirstName]        = useState(currentUser.first_name||"");
@@ -544,7 +604,6 @@ function SettingsPage({ ctx }) {
       if(lastName)  body.last_name=lastName;
       body.middle_name=middleName||"";
       await apiCall("/users.v1.UserService/Update",body,sessionId);
-      // Refresh from server to confirm what was saved
       let updatedFirst=firstName, updatedLast=lastName, updatedMiddle=middleName;
       try {
         const profile = await fetchUserProfile(sessionId);
@@ -573,7 +632,7 @@ function SettingsPage({ ctx }) {
       await apiCall("/users.v1.UserService/UpdateLogin", body, sessionId);
       showToast("Login info updated! Please sign in again.");
       clearSession();
-      setTimeout(() => handleLogout(), 1500); 
+      setTimeout(() => handleLogout(), 1500);
     } catch(e) { setLoginError(e.message||"Failed to update login info."); }
     finally { setLoginLoading(false); }
   }
