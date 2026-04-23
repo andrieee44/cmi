@@ -99,19 +99,21 @@ function icalEscape(s)       { return (s||"").replace(/\n/g,"\\n").replace(/,/g,
 function icalUnescape(s)     { return (s||"").replace(/\\n/g,"\n").replace(/\\,/g,",").replace(/\\;/g,";"); }
 function eventsToIcalB64(ev) { return btoa(unescape(encodeURIComponent(eventsToIcal(ev)))); }
 
-// Fetch full user profile: GetSelf → Get(id) to retrieve first_name/last_name
+// Resolve the current session to a user_id, then fetch the full profile.
+// Uses v2: GetSessionUserID → GetUser (no need to persist user_id in localStorage).
 async function fetchUserProfile(sid) {
-  const selfRes = await apiCall("/users.v1.UserService/GetSelf", {}, sid);
-  const id = selfRes.id;
-  if (!id) throw new Error("Could not determine user id.");
-  return apiCall("/users.v1.UserService/Get", { id }, sid);
+  const sessionRes = await apiCall("/users.v2.UserSessionService/GetSessionUserID", {}, sid);
+  const userId = sessionRes.userId;
+  if (!userId) throw new Error("Could not resolve user ID from session.");
+  const profile = await apiCall("/users.v2.UserService/GetUser", { userId }, sid);
+  return { ...profile, userId };
 }
 
 // Session token in localStorage — used to authenticate API calls
 const SESSION_KEY = "usc_session_id";
-function saveSession(sid) { try { localStorage.setItem(SESSION_KEY, sid); }       catch(e){} }
-function loadSession()    { try { return localStorage.getItem(SESSION_KEY); }      catch(e){ return null; } }
-function clearSession()   { try { localStorage.removeItem(SESSION_KEY); }          catch(e){} }
+function saveSession(sid)  { try { localStorage.setItem(SESSION_KEY, sid); }    catch(e) {} }
+function loadSession()     { try { return localStorage.getItem(SESSION_KEY); }  catch(e) { return null; } }
+function clearSession()    { try { localStorage.removeItem(SESSION_KEY); }      catch(e) {} }
 
 // Per-user localStorage helpers
 function userKey(uid, k)    { return `usc_${uid}_${k}`; }
@@ -135,9 +137,23 @@ function sameDay(a,b) { const da=new Date(a),db=new Date(b); return da.getFullYe
 function avatarColor(name) { const c=["#6c63ff","#34d399","#fbbf24","#f472b6","#60a5fa","#fb923c"]; let h=0; for(const ch of (name||"?")) h=(h+ch.charCodeAt(0))%c.length; return c[h]; }
 const PALETTE = ["#6c63ff","#34d399","#fbbf24","#f472b6","#60a5fa","#fb923c","#f87171","#2dd4bf"];
 function pickColor(id) { return PALETTE[Math.abs(id||0) % PALETTE.length]; }
+
+// buildUser reads user_id from the profile object (set by fetchUserProfile)
 function buildUser(profile, sid) {
-  const p=profile.user||profile, email=p.email||"", fullName=[p.first_name,p.middle_name,p.last_name].filter(Boolean).join(" ");
-  return { id:sid, email, name:fullName||email, first_name:p.first_name||"", last_name:p.last_name||"", middle_name:p.middle_name||"", userType:"student" };
+  const p = profile.user || profile;
+  const userId = p.userId;
+  const email = p.email || "";
+  const fullName = [p.firstName, p.middleName, p.lastName].filter(Boolean).join(" ");
+  return {
+    id: userId,           // int32 userId resolved via GetSessionUserID
+    sessionId: sid,       // session string kept separately
+    email,
+    name: fullName || email,
+    first_name:  p.firstName  || "",
+    last_name:   p.lastName   || "",
+    middle_name: p.middleName || "",
+    userType: "student",
+  };
 }
 
 // ✅ Fetch calendars + events from API, merge localStorage color prefs on top
@@ -219,9 +235,8 @@ function App() {
         console.log("Built user:", u);
         setCurrentUser(u);
         setSessionId(saved);
-        loadAllData(saved, saved);
+        loadAllData(saved, u.id);
         // Returning users — never show tutorial again
-        // (tutorial flag is only set from handleLogin with isNewUser=true)
       })
       .catch((e) => {
         console.error("Auth error:", e.status, e.message);
@@ -236,15 +251,23 @@ function App() {
     setCurrentUser(user);
     setSessionId(sid);
     // Only fire tutorial if this is a new registration AND they haven't seen it
-    if (isNewUser && !hasTutorialBeenSeen(sid)) {
+    if (isNewUser && !hasTutorialBeenSeen(user.id)) {
       setShowTutorial(true);
     }
-    setTimeout(() => loadAllData(sid, sid), 0);
+    setTimeout(() => loadAllData(sid, user.id), 0);
   }, []);
 
   const handleLogout = useCallback(async (revokeAll=false) => {
     if (sessionId) {
-      try { await apiCall(revokeAll ? "/users.v1.UserService/RevokeAll" : "/users.v1.UserService/Revoke", {}, sessionId); } catch(e) {}
+      try {
+        await apiCall(
+          revokeAll
+            ? "/users.v2.UserSessionService/RevokeAllSessions"
+            : "/users.v2.UserSessionService/RevokeSession",
+          {},
+          sessionId
+        );
+      } catch(e) {}
     }
     clearSession();
     setCurrentUser(null); setSessionId(null);
@@ -348,11 +371,13 @@ function AuthPage({ onLogin }) {
     if (!email||!password) { setError("Email and password are required."); return; }
     setError(""); setLoading(true);
     try {
-      const r = await apiCall("/users.v1.UserService/Login", {email, password});
-      const sid = r.session_id;
+      const r = await apiCall("/users.v2.UserService/LoginUser", { email, password });
+      const sid = r.sessionId;
+      const uid = r.userId;
       if (!sid) throw new Error("No session returned.");
-      // Fetch full profile so first_name/last_name are always available
-      let profile = r;
+      if (!uid) throw new Error("No user ID returned.");
+      // Fetch full profile via GetSessionUserID → GetUser
+      let profile = { userId: uid };
       try { profile = await fetchUserProfile(sid); } catch(e) {}
       const user = buildUser(profile, sid);
       const finalUser = user.email ? user : { ...user, email, name: email, userType: "student" };
@@ -366,19 +391,22 @@ function AuthPage({ onLogin }) {
     if (!firstName||!lastName||!email||!password) { setError("All fields are required."); return; }
     setError(""); setLoading(true);
     try {
-      const body = {email, password, first_name:firstName, last_name:lastName};
-      if (middleName) body.middle_name = middleName;
-      const r = await apiCall("/users.v1.UserService/Create", body);
-      const sid = r.session_id;
+      const body = { email, password, firstName, lastName };
+      if (middleName) body.middleName = middleName;
+      const r = await apiCall("/users.v2.UserService/CreateUser", body);
+      const sid = r.sessionId;
+      const uid = r.userId;
       if (!sid) throw new Error("Registration failed.");
-      // Fetch full profile to confirm stored name fields
-      let profile = r;
+      if (!uid) throw new Error("No user ID returned.");
+      // Fetch full profile via GetSessionUserID → GetUser
+      let profile = { userId: uid };
       try { profile = await fetchUserProfile(sid); } catch(e) {}
       const user = buildUser(profile, sid);
       const finalUser = (user.first_name || user.last_name) ? user : {
-        id:sid, email, name:[firstName,middleName,lastName].filter(Boolean).join(" ")||email,
-        first_name:firstName, last_name:lastName, middle_name:middleName,
-        userType: "student"
+        id: uid, sessionId: sid, email,
+        name: [firstName, middleName, lastName].filter(Boolean).join(" ") || email,
+        first_name: firstName, last_name: lastName, middle_name: middleName,
+        userType: "student",
       };
       // ✅ isNewUser=true — triggers the onboarding tutorial in App
       onLogin(finalUser, sid, true);
@@ -600,17 +628,17 @@ function SettingsPage({ ctx }) {
     setProfileError(""); setProfileLoading(true);
     try {
       const body={};
-      if(firstName) body.first_name=firstName;
-      if(lastName)  body.last_name=lastName;
-      body.middle_name=middleName||"";
-      await apiCall("/users.v1.UserService/Update",body,sessionId);
+      if(firstName) body.firstName=firstName;
+      if(lastName)  body.lastName=lastName;
+      body.middleName=middleName||"";
+      await apiCall("/users.v2.UserService/UpdateUser", body, sessionId);
       let updatedFirst=firstName, updatedLast=lastName, updatedMiddle=middleName;
       try {
         const profile = await fetchUserProfile(sessionId);
         const p = profile.user||profile;
-        updatedFirst  = p.first_name  || firstName;
-        updatedLast   = p.last_name   || lastName;
-        updatedMiddle = p.middle_name || middleName;
+        updatedFirst  = p.firstName  || firstName;
+        updatedLast   = p.lastName   || lastName;
+        updatedMiddle = p.middleName || middleName;
         setFirstName(updatedFirst);
         setLastName(updatedLast);
         setMiddleName(updatedMiddle);
@@ -629,7 +657,7 @@ function SettingsPage({ ctx }) {
       if(newEmail)    body.email=newEmail;
       if(newPassword) body.password=newPassword;
       if(!body.email&&!body.password){setLoginError("Enter a new email or password.");setLoginLoading(false);return;}
-      await apiCall("/users.v1.UserService/UpdateLogin", body, sessionId);
+      await apiCall("/users.v2.UserService/UpdateLoginUser", body, sessionId);
       showToast("Login info updated! Please sign in again.");
       clearSession();
       setTimeout(() => handleLogout(), 1500);
@@ -640,7 +668,7 @@ function SettingsPage({ ctx }) {
   async function deleteAccount() {
     if(!window.confirm("Permanently delete your account? This cannot be undone.")) return;
     setDeleteLoading(true);
-    try { await apiCall("/users.v1.UserService/Delete",{},sessionId); clearSession(); handleLogout(); }
+    try { await apiCall("/users.v2.UserService/DeleteUser", {}, sessionId); clearSession(); handleLogout(); }
     catch(e) { showToast(e.message||"Failed to delete account.","error"); }
     finally { setDeleteLoading(false); }
   }
