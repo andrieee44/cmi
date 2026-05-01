@@ -206,7 +206,8 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
 .btn-icon:hover { color:var(--text); border-color:var(--border2); }
 .error-msg { background:rgba(248,113,113,0.12); border:1px solid rgba(248,113,113,0.25); color:var(--red); border-radius:var(--radius-sm); padding:10px 13px; font-size:13px; margin-bottom:16px; }
 .success-msg { background:rgba(52,211,153,0.12); border:1px solid rgba(52,211,153,0.25); color:var(--green); border-radius:var(--radius-sm); padding:10px 13px; font-size:13px; margin-bottom:16px; }
-.sidebar { width:260px; min-width:260px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; height:100vh; overflow:hidden; transition:transform 0.3s ease; }
+.sidebar { width:260px; min-width:260px; background:var(--surface); border-right:1px solid var(--border); display:flex; flex-direction:column; height:100vh; overflow:hidden; transition:width 0.3s cubic-bezier(0.4,0,0.2,1), transform 0.3s ease; position:relative; flex-shrink:0; }
+.sidebar.collapsed { width:64px; min-width:64px; }
 .sidebar-logo { padding:24px 22px 18px; font-family:var(--font-head); font-size:22px; font-weight:800; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:0; overflow:visible; }
 .logo-sched {
   background: linear-gradient(90deg, #3b9fe8 0%, #2ec4f0 100%);
@@ -577,3 +578,7 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
   font-size:17px; flex-shrink:0;
 }
 .theme-toggle:hover { color:var(--text); border-color:var(--border2); }
+
+/* ── Collapsed sidebar nav items ── */
+.nav-item-icon-only { justify-content:center; padding:10px 0; }
+.nav-item-icon-only:hover { background:var(--surface2); }

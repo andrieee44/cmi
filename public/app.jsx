@@ -320,6 +320,7 @@ async function fetchAllCalendars(sid, calPrefs, userId) {
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
 function App() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [currentUser,   setCurrentUser]  = useState(null);
   const [sessionId,     setSessionId]    = useState(null);
   const [authLoading,   setAuthLoading]  = useState(true);
@@ -455,7 +456,7 @@ function App() {
     <div className="app">
       <Toast toast={toast} />
       <div className={`sidebar-backdrop${sidebarOpen?" open":""}`} onClick={()=>setSidebarOpen(false)} />
-      <Sidebar page={page} setPage={navigateTo} ctx={ctx} isOpen={sidebarOpen} />
+      <Sidebar page={page} setPage={navigateTo} ctx={ctx} isOpen={sidebarOpen} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} />
       <div className="main">
         <Topbar page={page} ctx={ctx} setPage={navigateTo} onMenuClick={()=>setSidebarOpen(true)} />
         <div className="content">
@@ -731,49 +732,79 @@ function AuthPage({ onLogin }) {
 }
 
 // ─── SIDEBAR ──────────────────────────────────────────────────────────────────
-function Sidebar({ page, setPage, ctx, isOpen }) {
-  const { currentUser, handleLogout, myCalendars } = ctx;
+function Sidebar({ page, setPage, ctx, isOpen, collapsed, setCollapsed }) {
+  const { currentUser, handleLogout } = ctx;
   const ac = loadAvatarColor(currentUser.id, currentUser.name);
   const initials = nameInitials(currentUser.first_name, currentUser.last_name);
+
   const navItems = [
-    {id:"dashboard",    icon:"⊞",  label:"Dashboard"},
-    {id:"calendar",     icon:"📅", label:"Calendar View"},
-    {id:"events",       icon:"🗓",  label:"Events List"},
-    {id:"calendars",    icon:"📚", label:"Manage Calendars"},
-    {id:"organizations",icon:"🏛",  label:"Organizations"},
-    {id:"tasks",        icon:"✅", label:"Task Tracker"},
-    {id:"ai",           icon:"✨", label:"AI Tools"},
-    {id:"settings",     icon:"⚙️", label:"Settings"},
+    {id:"dashboard",     icon:"⊞",  label:"Dashboard"},
+    {id:"calendar",      icon:"📅", label:"Calendar View"},
+    {id:"events",        icon:"🗓",  label:"Events List"},
+    {id:"calendars",     icon:"📚", label:"Manage Calendars"},
+    {id:"organizations", icon:"🏛",  label:"Organizations"},
+    {id:"tasks",         icon:"✅", label:"Task Tracker"},
+    {id:"ai",            icon:"✨", label:"AI Tools"},
+    {id:"settings",      icon:"⚙️", label:"Settings"},
   ];
+
   return (
-    <div className={`sidebar${isOpen?" open":""}`}>
-      <div className="sidebar-logo"><span className="logo-sched">Sched</span><span className="logo-u">U</span></div>
-      <div className="sidebar-user">
-        <div className="user-avatar" style={{background:ac}}>{initials}</div>
-        <div className="user-info">
-          <div className="user-name">{[currentUser.first_name, currentUser.last_name].filter(Boolean).join(" ") || currentUser.name}</div>
-          <div style={{fontSize:11,color:"var(--text3)",marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{currentUser.email}</div>
-          <div className="user-badge">Student</div>
-        </div>
+    <div className={`sidebar${isOpen ? " open" : ""}${collapsed ? " collapsed" : ""}`}>
+      {/* Logo / collapse toggle */}
+      <div className="sidebar-logo" style={{ justifyContent: collapsed ? "center" : "flex-start", padding: collapsed ? "24px 0" : undefined }}>
+        {collapsed
+          ? <span title="Expand sidebar" style={{ cursor:"pointer", fontSize:20 }} onClick={() => setCollapsed(false)}>▶</span>
+          : <><span className="logo-sched">Sched</span><span className="logo-u">U</span></>
+        }
       </div>
+
+      {/* User avatar */}
+      <div className="sidebar-user" style={{ justifyContent: collapsed ? "center" : undefined, padding: collapsed ? "12px 0" : undefined }}>
+        <div className="user-avatar" title={collapsed ? ([currentUser.first_name, currentUser.last_name].filter(Boolean).join(" ") || currentUser.name) : undefined} style={{ background: ac, flexShrink: 0 }}>{initials}</div>
+        {!collapsed && (
+          <div className="user-info">
+            <div className="user-name">{[currentUser.first_name, currentUser.last_name].filter(Boolean).join(" ") || currentUser.name}</div>
+            <div style={{ fontSize:11, color:"var(--text3)", marginBottom:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{currentUser.email}</div>
+            <div className="user-badge">Student</div>
+          </div>
+        )}
+      </div>
+
+      {/* Nav */}
       <div className="sidebar-nav">
         <div className="nav-section">
-          {navItems.map(item=>(
-            // data-tutorial="nav-<id>" — used by OnboardingTutorial spotlight
-            <div
-              key={item.id}
-              className={`nav-item${page===item.id?" active":""}`}
-              onClick={()=>setPage(item.id)}
+          {navItems.map(item => (
+            <div key={item.id}
+              className={`nav-item${page === item.id ? " active" : ""}${collapsed ? " nav-item-icon-only" : ""}`}
+              onClick={() => setPage(item.id)}
               data-tutorial={`nav-${item.id}`}
+              title={collapsed ? item.label : undefined}
             >
-              <span style={{fontSize:16}}>{item.icon}</span>
-              <span style={{flex:1}}>{item.label}</span>
+              <span style={{ fontSize: 18 }}>{item.icon}</span>
+              {!collapsed && <span style={{ flex: 1 }}>{item.label}</span>}
             </div>
           ))}
         </div>
       </div>
-      <div className="sidebar-footer">
-        <button className="btn btn-ghost btn-sm w-full" onClick={()=>handleLogout()}>← Sign Out</button>
+
+      {/* Footer */}
+{/* Footer */}
+      <div className="sidebar-footer" style={{ padding: collapsed ? "14px 0" : undefined, display:"flex", flexDirection:"column", gap:6 }}>
+        <div
+        title={collapsed ? "Expand" : "Collapse"}
+        onClick={() => setCollapsed(c => !c)}
+        style={{ display:"flex", justifyContent: collapsed ? "center" : "flex-end",
+          padding: collapsed ? "4px 0" : "0 4px 6px", cursor:"pointer" }}
+      >
+        <span style={{ fontSize:12, color:"var(--text3)", opacity:0.45, transition:"var(--transition)" }}
+          onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+          onMouseLeave={e => e.currentTarget.style.opacity = "0.45"}
+        >{collapsed ? "▶" : "◀"}</span>
+      </div>
+        {collapsed
+          ? <div title="Sign Out" style={{ textAlign:"center", cursor:"pointer", fontSize:18, color:"var(--text3)", padding:"6px 0" }} onClick={() => handleLogout()}>⏻</div>
+          : <button className="btn btn-ghost btn-sm w-full" onClick={() => handleLogout()}>← Sign Out</button>
+        }
       </div>
     </div>
   );
