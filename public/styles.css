@@ -34,10 +34,16 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
   display:flex; width:100%; height:100vh; overflow:hidden;
   background:var(--bg);
 }
+@media (max-width: 768px) {
+  .auth-split-wrap {
+    flex-direction:column; height:auto; min-height:100vh;
+    overflow-y:auto; overflow-x:hidden;
+  }
+}
 
 /* ── LEFT: Hero panel ── */
 .auth-hero-panel {
-  flex:1; min-width:0; position:relative; overflow:hidden; overflow-y:auto;
+  flex:1; min-width:0; position:relative; overflow:hidden; overflow-y:auto; flex-shrink:0;
   background: linear-gradient(160deg, #0c0c1a 0%, #0f1020 40%, #080f18 100%);
   border-right:1px solid rgba(108,99,255,0.15);
   display:flex; align-items:stretch;
@@ -173,11 +179,11 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
 .auth-inline-link:hover { color:var(--accent); }
 
 @media (max-width: 768px) {
-  .auth-split-wrap { flex-direction:column; height:auto; min-height:100vh; overflow-y:auto; }
-  .auth-hero-panel { display:flex; width:100%; max-height:none; overflow-y:visible; border-right:none; border-bottom:1px solid var(--border); }
-  .auth-hero-inner { padding:32px 24px; }
+  .auth-hero-panel { display:flex; width:100%; height:auto; max-height:none; overflow:visible; border-right:none; border-bottom:1px solid var(--border); flex-shrink:0; }
+  .auth-hero-inner { padding:28px 20px; gap:18px; }
   .auth-form-side { width:100%; min-width:0; min-height:auto; border-left:none; background:var(--bg); }
   .auth-mobile-logo { display:none; }
+  .auth-team-grid { grid-template-columns:1fr; }
 }
 .auth-bg { position:absolute; inset:0; background: radial-gradient(ellipse at 30% 20%, rgba(108,99,255,0.18) 0%, transparent 60%), radial-gradient(ellipse at 80% 80%, rgba(167,139,250,0.10) 0%, transparent 50%); pointer-events:none; }
 .auth-card { background:var(--surface); border:1px solid var(--border); border-radius:24px; padding:48px 44px; width:100%; max-width:440px; position:relative; z-index:1; box-shadow:var(--shadow), 0 0 80px rgba(108,99,255,0.12); }
