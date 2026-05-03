@@ -23,6 +23,15 @@ const orgMemApi    = (method, body, sid) => apiCall(`${ORG_MEM_BASE}/${method}`,
 const orgCalApi    = (method, body, sid) => apiCall(`${ORG_CAL_BASE}/${method}`, body, sid);
 const orgPromptApi = (method, body, sid) => apiCall(`${ORG_PROMPT_BASE}/${method}`, body, sid);
 
+function loadOrgAuditLog(orgId) {
+  try { const r = localStorage.getItem(`usc_org_audit_${orgId}`); return r ? JSON.parse(r) : []; } catch(e) { return []; }
+}
+function addOrgAuditEntry(orgId, entry) {
+  const log = loadOrgAuditLog(orgId);
+  log.unshift({ ...entry, timestamp: new Date().toISOString() });
+  try { localStorage.setItem(`usc_org_audit_${orgId}`, JSON.stringify(log.slice(0, 100))); } catch(e) {}
+}
+
 // ─── LOCAL STORAGE — track joined org IDs (no server list-my-orgs endpoint) ──
 function loadOrgIds(userId) {
   try {
@@ -80,6 +89,7 @@ function OrganizationsTab({ ctx }) {
   const [search,       setSearch]       = React.useState("");
   const [subTab,       setSubTab]       = React.useState("browse"); // "browse" | "mine"
   const [refreshKey,   setRefreshKey]   = React.useState(0);
+  const [confirmDlg, setConfirmDlg] = React.useState(null);
 
   const userId = currentUser.id;
 
@@ -126,49 +136,75 @@ function OrganizationsTab({ ctx }) {
   // ── Join org (checks for a join prompt first)
   async function handleJoin(orgId) {
     const org = orgDetails[orgId];
-    // If org requires approval, check whether there's a join prompt questionnaire
     if (org?.requiresJoinRequest) {
+      setJoinLoading(orgId);
       try {
         const promptRes = await orgPromptApi("GetCurrentJoinPrompt", { organizationId: Number(orgId) }, sessionId);
-        if (promptRes?.joinPromptEventId) {
-          // Fetch the full prompt text then show the questionnaire modal
-          const promptDetail = await orgPromptApi("GetJoinPrompt", { joinPromptEventId: promptRes.joinPromptEventId }, sessionId);
-          setModal({ type: "join-prompt", data: { orgId, org, prompt: promptDetail.prompt || "" } });
+        const promptId = promptRes?.joinPromptEventId;
+        if (!promptId) {
+          showToast("This organization requires approval but has no questionnaire set up yet. Contact the owner.", "error");
+          setJoinLoading(null);
           return;
         }
+        const promptDetail = await orgPromptApi("GetJoinPrompt", { joinPromptEventId: promptId }, sessionId);
+        setJoinLoading(null);
+        setModal({ type: "join-prompt", data: { orgId, org, prompt: { text: promptDetail.prompt || "", joinPromptEventId: promptId } } });
+        return;
       } catch(e) {
-        // No prompt exists — fall through to direct join
+        showToast("Could not load join questionnaire: " + (e.message || "unknown error"), "error");
+        setJoinLoading(null);
+        return;
       }
     }
-    setJoinLoading(orgId);
-    try {
-      await orgMemApi("JoinOrganization", { organizationId: Number(orgId) }, sessionId);
-      addJoinedOrgId(userId, orgId);
-      showToast(`Joined "${org?.name}"!`);
-      setAllOrgs(prev => [...prev]);
-    } catch(e) {
-      showToast(e.message || "Failed to join organization.", "error");
-    } finally {
-      setJoinLoading(null);
-    }
+
+    setConfirmDlg({
+      message: `Join "${org?.name}"?`,
+      description: org?.description ? org.description : undefined,
+      onConfirm: async () => {
+        setJoinLoading(orgId);
+        try {
+          await orgMemApi("JoinOrganization", { organizationId: Number(orgId) }, sessionId);
+          addJoinedOrgId(userId, orgId);
+          addOrgAuditEntry(orgId, { name: currentUser.name || currentUser.email, action: "joined" });
+          showToast(`Joined "${org?.name}"!`);
+          setAllOrgs(prev => [...prev]);
+        } catch(e) {
+          const msg = e.message || "";
+          if (msg.includes("1644") || msg.toLowerCase().includes("already exists") || msg.toLowerCase().includes("membership")) {
+            addJoinedOrgId(userId, orgId);
+            showToast(`You're already a member of "${org?.name}".`);
+            setAllOrgs(prev => [...prev]);
+          } else {
+            showToast(msg || "Failed to join organization.", "error");
+          }
+        } finally {
+          setJoinLoading(null);
+        }
+      }
+    });
   }
 
-  // ── Leave org
-  async function handleLeave(orgId) {
-    const name = orgDetails[orgId]?.name || "this organization";
-    if (!window.confirm(`Leave "${name}"?`)) return;
-    setLeaveLoading(orgId);
-    try {
-      await orgMemApi("LeaveOrganization", { organizationId: Number(orgId) }, sessionId);
-      removeOrgId(userId, orgId);
-      showToast(`Left "${name}"`);
-      setAllOrgs(prev => [...prev]);
-    } catch(e) {
-      showToast(e.message || "Failed to leave.", "error");
-    } finally {
-      setLeaveLoading(null);
+  function handleLeave(orgId) {
+  const name = orgDetails[orgId]?.name || "this organization";
+  setConfirmDlg({
+    message: `Leave "${name}"?`,
+    danger: true,
+    onConfirm: async () => {
+      setLeaveLoading(orgId);
+      try {
+        await orgMemApi("LeaveOrganization", { organizationId: Number(orgId) }, sessionId);
+        removeOrgId(userId, orgId);
+        addOrgAuditEntry(orgId, { name: currentUser.name || currentUser.email, action: "left" });
+        showToast(`Left "${name}"`);
+        setAllOrgs(prev => [...prev]);
+      } catch(e) {
+        showToast(e.message || "Failed to leave.", "error");
+      } finally {
+        setLeaveLoading(null);
+      }
     }
-  }
+  });
+}
 
   // ── Delete org (owner only)
   async function handleDelete(orgId) {
@@ -198,8 +234,14 @@ function OrganizationsTab({ ctx }) {
   const myOrgCount = allOrgs.filter(id => isOrgJoined(userId, id)).length;
 
   return (
-    <div>
-      {/* ── Sub-tabs + Create button */}
+  <div>
+    {confirmDlg && (
+      <ConfirmDialog
+        {...confirmDlg}
+        onClose={() => setConfirmDlg(null)}
+      />
+    )}
+    {/* ── Sub-tabs + Create button */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
         <div style={{ display:"flex", gap:0, background:"var(--surface2)", borderRadius:10, padding:3, border:"1px solid var(--border)" }}>
           {[["browse","🌐 Browse"], ["mine", `👥 My Orgs${myOrgCount ? ` (${myOrgCount})` : ""}`]].map(([t, l]) => (
@@ -636,6 +678,7 @@ function ManageOrgModal({ ctx, orgId, org }) {
           <button style={sectionBtnStyle("calendars")} onClick={() => setActiveSection("calendars")}>📅 Shared Calendars</button>
           <button style={sectionBtnStyle("join-prompt")} onClick={() => setActiveSection("join-prompt")}>📋 Join Questionnaire</button>
           <button style={sectionBtnStyle("members")} onClick={() => setActiveSection("members")}>👥 Members</button>
+          <button style={sectionBtnStyle("activity")}    onClick={() => setActiveSection("activity")}>📋 Activity</button>
           <button style={sectionBtnStyle("settings")}  onClick={() => setActiveSection("settings")}>⚙️ Settings</button>
         </div>
 
@@ -846,6 +889,62 @@ function ManageOrgModal({ ctx, orgId, org }) {
               </button>
             </div>
           )}
+
+          {activeSection === "activity" && (() => {
+            const log = loadOrgAuditLog(orgId);
+            return (
+              <div>
+                <div style={{ fontSize:12, color:"var(--text3)", marginBottom:14 }}>
+                  Membership activity for this organization — visible only to you as owner.
+                </div>
+                {log.length === 0 ? (
+                  <div style={{ textAlign:"center", padding:"40px 0", color:"var(--text3)" }}>
+                    <div style={{ fontSize:32, marginBottom:8 }}>📋</div>
+                    <div style={{ fontSize:13 }}>No activity recorded yet.</div>
+                    <div style={{ fontSize:12, marginTop:4 }}>Join and leave events will appear here.</div>
+                  </div>
+                ) : (
+                  <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                    {log.map((entry, i) => {
+                      const isJoin = entry.action === "joined";
+                      return (
+                        <div key={i} style={{ display:"flex", alignItems:"center", gap:12,
+                          padding:"10px 14px", borderRadius:10,
+                          background:"var(--surface2)", border:"1px solid var(--border)" }}>
+                          <div style={{ width:32, height:32, borderRadius:"50%", flexShrink:0,
+                            background: PALETTE[i % PALETTE.length] + "22",
+                            border:`1.5px solid ${PALETTE[i % PALETTE.length]}55`,
+                            display:"flex", alignItems:"center", justifyContent:"center",
+                            fontSize:12, fontWeight:700, color: PALETTE[i % PALETTE.length] }}>
+                            {(entry.name||"?")[0].toUpperCase()}
+                          </div>
+                          <div style={{ flex:1, minWidth:0 }}>
+                            <div style={{ fontSize:13, fontWeight:600, color:"var(--text)",
+                              whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                              {entry.name || "Unknown"}
+                            </div>
+                            <div style={{ fontSize:11, color:"var(--text3)", marginTop:1 }}>
+                              {new Date(entry.timestamp).toLocaleString("en-PH", {
+                                month:"short", day:"numeric", year:"numeric",
+                                hour:"2-digit", minute:"2-digit"
+                              })}
+                            </div>
+                          </div>
+                          <span style={{ fontSize:11, fontWeight:700, padding:"3px 9px", borderRadius:20,
+                            whiteSpace:"nowrap", flexShrink:0,
+                            background: isJoin ? "rgba(52,211,153,0.12)" : "rgba(248,113,113,0.12)",
+                            color: isJoin ? "var(--green)" : "var(--red)",
+                            border: isJoin ? "1px solid rgba(52,211,153,0.3)" : "1px solid rgba(248,113,113,0.3)" }}>
+                            {entry.action}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="modal-footer">
@@ -868,23 +967,40 @@ function JoinPromptModal({ ctx, orgId, org, prompt }) {
   const col    = orgColor(orgId);
 
   async function submit() {
-    if (!answer.trim()) { setError("Please answer the questionnaire before submitting."); return; }
-    setLoading(true); setError("");
-    try {
-      // The server JoinOrganization call handles the actual membership;
-      // the answer is not persisted server-side yet (join response proto is stubbed).
-      // We join normally and include the answer as best-effort context.
-      await orgMemApi("JoinOrganization", { organizationId: Number(orgId) }, sessionId);
-      addJoinedOrgId(userId, orgId);
-      showToast(`Request submitted to "${org.name}"!`);
-      if (typeof window.__refreshOrgs === "function") window.__refreshOrgs();
-      closeModal();
-    } catch(e) {
-      setError(e.message || "Failed to submit join request.");
-    } finally {
-      setLoading(false);
-    }
+  if (!answer.trim()) { setError("Please answer the questionnaire before submitting."); return; }
+  setLoading(true); setError("");
+  try {
+    const joinPromptEventId = prompt?.joinPromptEventId;
+    console.log("[Step 1] Calling CreateJoinResponse with joinPromptEventId =", joinPromptEventId);
+
+    const responseRes = await apiCall(
+      "/organizations.v2.OrganizationJoinResponseService/CreateJoinResponse",
+      { joinPromptEventId: joinPromptEventId, response: answer.trim() },
+      sessionId
+    );
+    console.log("[Step 1] CreateJoinResponse result =", responseRes);
+
+    const joinResponseEventId = responseRes?.joinResponseEventId;
+    if (!joinResponseEventId) throw new Error("No response ID returned from server.");
+
+    console.log("[Step 2] Calling CreateJoinRequest with joinResponseEventId =", joinResponseEventId);
+    await apiCall(
+      "/organizations.v2.OrganizationJoinRequestService/CreateJoinRequest",
+      { joinResponseEventId: joinResponseEventId },
+      sessionId
+    );
+    console.log("[Step 2] CreateJoinRequest success");
+
+    showToast(`Request submitted to "${org.name}"! Waiting for approval.`);
+    if (typeof window.__refreshOrgs === "function") window.__refreshOrgs();
+    closeModal();
+  } catch(e) {
+    console.error("[JoinPrompt] Error at step:", e.message, e);
+    setError(e.message || "Failed to submit join request.");
+  } finally {
+    setLoading(false);
   }
+}
 
   return (
     <div className="modal-overlay" onClick={closeModal}>
@@ -918,7 +1034,7 @@ function JoinPromptModal({ ctx, orgId, org, prompt }) {
               📋 Questionnaire
             </div>
             <div style={{ fontSize:14, color:"var(--text)", lineHeight:1.7, whiteSpace:"pre-wrap" }}>
-              {prompt}
+              {prompt?.text || prompt}
             </div>
           </div>
 

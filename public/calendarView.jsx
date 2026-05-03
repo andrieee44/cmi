@@ -80,11 +80,6 @@ function CalendarPage({ ctx }) {
             </div>
           );
         })}
-        {selectedCals && (
-          <button className="btn-icon btn-sm" onClick={() => setSelectedCals(null)}
-            style={{ fontSize:11, padding:"4px 8px" }}>Reset</button>
-        )}
-
         {/* Sub-feature: Org Calendars Filter — one pill per org-shared calendar */}
         {orgCals.length > 0 && (<>
           <div style={{ width:1, height:16, background:"var(--border)", flexShrink:0, margin:"0 2px" }} />
