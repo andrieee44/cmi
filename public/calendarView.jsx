@@ -60,8 +60,7 @@ function CalendarPage({ ctx }) {
   return (
     <div>
       {/* Sub-feature: Calendar Filter Toggle — click a pill to show/hide a calendar */}
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>
-        {cals.map(c => {
+        <div className="cal-filter" style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14, alignItems:"center" }}>        {cals.map(c => {
           const active = visibleCals.includes(c.id);
           return (
             <div key={c.id}
@@ -149,8 +148,10 @@ function CalendarPage({ ctx }) {
               .filter(e => sameDay(e.startTime, cell.date.toISOString()))
               .sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
             const isToday = sameDay(cell.date.toISOString(), today.toISOString());
-            const show = dayEvts.slice(0, 2);
-            const more = dayEvts.length - 2;
+            const isMobile = window.innerWidth <= 768;
+            const maxShow  = isMobile ? 1 : 2;
+            const show     = dayEvts.slice(0, maxShow);
+            const more     = dayEvts.length - maxShow;
             return (
               <div key={i}
                 className={`cal-cell${cell.isOtherMonth?" other-month":""}${isToday?" today":""}`}

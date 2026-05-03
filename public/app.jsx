@@ -648,11 +648,12 @@ function AuthPage({ onLogin }) {
         <div className="auth-form-box">
           {/* Mobile-only logo */}
           <div className="auth-mobile-logo">
+            <img src="assets/SchedU.png" style={{ width:38, height:38, borderRadius:10, marginRight:8 }} />
             <span className="logo-sched">Sched</span><span className="logo-u">U</span>
           </div>
 
           <div className="auth-form-heading">
-            {activeTab === "login" ? "Welcome back" : "Create account"}
+            {activeTab === "login" ? "Welcome!" : "Create account"}
           </div>
           <div className="auth-form-sub">
             {activeTab === "login" ? "Sign in to your SchedU account" : "Join SchedU and stay organized"}

@@ -131,7 +131,7 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
 }
 .auth-form-box { width:100%; max-width:340px; }
 
-.auth-mobile-logo { display:none; font-family:var(--font-head); font-size:28px; font-weight:800; margin-bottom:20px; }
+.auth-mobile-logo { display:none; font-family:var(--font-head); font-size:28px; font-weight:800; margin-bottom:20px; align-items:center; justify-content:center; }
 
 .auth-form-heading {
   font-family:var(--font-head); font-size:24px; font-weight:800;
@@ -181,11 +181,12 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
 @media (max-width: 768px) {
   .auth-split-wrap { flex-direction:column; height:100vh; overflow:hidden; align-items:center; justify-content:center; background:var(--bg); }
   .auth-hero-panel { display:none; }
-  .auth-mobile-logo { display:none; }
+  .auth-mobile-logo { display:flex; margin-bottom:22px; }
   .auth-form-side {
-    width:100%; min-width:0; border:none; background:transparent;
-    display:flex; align-items:center; justify-content:center;
-    padding:24px 20px;
+  width:100%; min-width:0; border:none; background:transparent;
+  display:flex; align-items:center; justify-content:center;
+  padding:0 20px;
+  position:absolute; top:50%; left:0; transform:translateY(-50%);
   }
   .auth-form-box {
     width:100%; max-width:360px;
@@ -434,7 +435,7 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
   /* Calendar filter pills: scroll */
   .cal-filter { flex-wrap:nowrap !important; overflow-x:auto; padding-bottom:4px; }
   /* Calendar grid: smaller cells */
-  .cal-cell { height:70px !important; max-height:70px !important; padding:4px 2px !important; }
+  .cal-cell { height:80px !important; max-height:80px !important; padding:4px 3px !important; }
   .cal-day-name { padding:8px 2px !important; font-size:10px !important; }
   .cal-event { font-size:9px !important; padding:1px 3px !important; }
   .cal-date { font-size:11px !important; }
@@ -461,7 +462,7 @@ body { font-family: var(--font-body); background: var(--bg); color: var(--text);
 
 /* Extra padding at bottom on mobile so content isn't under bottom nav */
 @media (max-width: 768px) {
-  .content { padding-bottom: 80px; }
+  .content { padding-bottom: 24px; }
 }
 
 /* ── Sprint / Feature Task Tracker ── */
